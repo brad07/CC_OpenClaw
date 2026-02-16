@@ -1,53 +1,86 @@
 # Claude Code Hooks → OpenClaw Notification Bridge
 
 ## What We're Building
-A lightweight integration that lets Claude Code running on another Mac on the same LAN send notifications to OpenClaw when it has a question or needs user input. The user (Brad) gets notified via Telegram so he can respond without being at the other machine.
+A lightweight integration that lets Claude Code running on another Mac on the same LAN send notifications to OpenClaw when it has a question, needs permission, or finishes a task. Brad gets notified via Telegram.
 
 ## Architecture
-
-### Components
-1. **Hook scripts** — Installed on the remote Mac where Claude Code runs. These are Claude Code hooks (see `.claude/settings.json` hooks config) that fire when Claude Code needs input/asks a question.
-2. **Notification endpoint** — Uses OpenClaw's existing HTTP API on this Mac (the one running OpenClaw on port 18789) to send a message to Brad via Telegram.
 
 ### Flow
 ```
 Remote Mac (Claude Code) 
-  → Hook fires (question/input needed)
-  → HTTP POST to OpenClaw Mac's API (same LAN)
+  → Hook fires (Stop, Notification, PermissionRequest)
+  → HTTP POST to OpenClaw Mac via Tailscale Funnel (already exposed)
   → OpenClaw sends Telegram notification to Brad
-  → Brad can respond via Telegram
 ```
 
-### Key Details
-- Both Macs are on the same local network
-- OpenClaw runs on this Mac (roon's Mac mini) at port 18789, currently bound to loopback
-- OpenClaw has an HTTP API with chat completions endpoint enabled
-- OpenClaw auth token is used for API auth
-- Claude Code hooks config lives in `.claude/settings.json` on the remote Mac
+### Components to Build
+1. **Hook scripts** for the remote Mac's `~/.claude/settings.json`
+2. **A small notification relay script** that POSTs to OpenClaw's chat completions API
+3. **Setup/install script** for easy deployment on the remote Mac
+4. **README** with clear instructions
 
-## Requirements
-1. Hook scripts that detect when Claude Code asks a question / needs input
-2. A simple HTTP client script that sends the notification to OpenClaw
-3. Clear setup instructions for installing on the remote Mac
-4. The notification should arrive in Brad's Telegram with context (what project, what question)
-5. Ideally Brad can reply via Telegram and the response gets back to Claude Code (stretch goal)
+## Claude Code Hook Events to Capture
 
-## Claude Code Hooks Reference
-Claude Code supports hooks in `.claude/settings.json`:
-- `PreToolUse` — before tool execution
-- `PostToolUse` — after tool execution  
-- `Notification` — when Claude Code wants to notify the user (THIS IS THE KEY ONE)
-- `Stop` — when the agent stops and needs input
+### `Stop` (agent finished, needs input)
+- Fires when Claude finishes responding and waits for user input
+- No matcher support — always fires
+- Input includes: `stop_hook_active`, `stop_reason`, `transcript_summary`
+- This is the PRIMARY hook — it means "Claude Code needs you"
 
-The `Notification` and `Stop` hooks are the most relevant — they fire when Claude Code has a question or finishes a task.
+### `Notification` 
+- Fires when Claude Code sends a notification
+- Matchers: `permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`
+- We want `permission_prompt` and `idle_prompt`
 
-## OpenClaw API
-- Endpoint: `POST http://<openclaw-ip>:18789/v1/chat/completions`
-- Auth: `Authorization: Bearer <token>`
-- Or use system events: `openclaw system event --text "..." --mode now`
+### `PermissionRequest`
+- Fires when a permission dialog appears
+- Good to capture so Brad knows Claude Code is waiting for approval
+
+### Hook Config Format
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/notify-openclaw.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|idle_prompt",
+        "hooks": [
+          {
+            "type": "command", 
+            "command": "/path/to/notify-openclaw.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## OpenClaw API Access
+- Tailscale Funnel already exposed at: `https://roons-mac-mini.tail0d0ae1.ts.net`
+- Auth token available
+- Use `/v1/chat/completions` endpoint with a system message that tells OpenClaw to notify Brad
+- Or simpler: just use `curl` to hit the OpenClaw API with a message that gets forwarded to Telegram
+
+## Deliverables
+1. `notify-openclaw.sh` — the hook script that reads stdin JSON and POSTs to OpenClaw
+2. `install.sh` — setup script for the remote Mac
+3. `README.md` — docs
+4. Example `.claude/settings.json` hooks config
+5. Config file for the remote Mac (OpenClaw URL, token, etc.)
 
 ## Constraints
-- Keep it simple — shell scripts + minimal deps
+- Shell scripts + curl only (no extra deps beyond jq)
 - Must work on macOS
 - Should be easy to install on a fresh Mac with Claude Code
-- Include a setup/install script
+- Notifications should include: what project, what happened, any question/context
+- Keep it simple and robust
