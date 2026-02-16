@@ -28,11 +28,10 @@ Remote Mac (Claude Code)
 ## Install
 
 ```bash
-# 1. Copy files to the remote Mac
-scp -r . remote-mac:~/claude-code-hooks/
+# 1. On the remote Mac, clone the repo
+git clone https://github.com/brad07/CC_OpenClaw.git ~/claude-code-hooks
 
-# 2. SSH in and run the installer
-ssh remote-mac
+# 2. Run the installer
 cd ~/claude-code-hooks
 chmod +x install.sh uninstall.sh
 ./install.sh
